@@ -1,0 +1,4 @@
+*.vma.zst
+*.tar.xz
+.DS_Store
+provisioners/vm-provisioner/vm.json

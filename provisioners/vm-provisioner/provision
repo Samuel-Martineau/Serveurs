@@ -1,0 +1,63 @@
+#!/bin/bash
+
+set -e
+cd "$(dirname "$0")"
+
+gum style --border normal --margin "1" --padding "1 2" --border-foreground '#27ae60' "Provisioning a new $(gum style --italic --bold --foreground '#2ecc71' 'virtual machine')."
+
+echo "Virtual machine $(gum style --foreground '#3498db' 'name')?"
+name=$(shuf ../moons.txt | gum choose --cursor.foreground '#3498db')
+printf '\e[A\e[K'
+echo "Name: $(gum style --foreground '#3498db' "$name")"
+
+if [ -f ../../hardware-configurations/"$name".nix ]; then
+  gum style --foreground '#e74c3c' "There is already a machine with the name $(gum style --bold "\"$name\"")"
+  exit 1
+fi
+
+echo "Virtual machine $(gum style --foreground '#3498db' 'core count')?"
+core_count=$(gum input --value 2 --cursor.foreground '#2980b9')
+printf '\e[A\e[K'
+echo "Core count: $(gum style --foreground '#3498db' "$core_count")"
+
+echo "Virtual machine $(gum style --foreground '#3498db' 'memory')?"
+memory=$(gum input --value '1GiB' --cursor.foreground '#3498db')
+memory=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Converting units…' -- wolframscript -code "N[QuantityMagnitude[Interpreter[\"Quantity\"][\"$memory\"],\"MiB\"]]")
+printf '\e[A\e[K'
+echo "Memory: $(gum style --foreground '#3498db' "${memory} MiB")"
+
+echo "Virtual machine $(gum style --foreground '#3498db' 'storage')?"
+storage=$(gum input --value '10GiB' --cursor.foreground '#3498db')
+storage=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Converting units…' -- wolframscript -code "N[QuantityMagnitude[Interpreter[\"Quantity\"][\"$storage\"],\"MiB\"]]")
+printf '\e[A\e[K'
+echo "Storage: $(gum style --foreground '#3498db' "${storage} MiB")"
+
+jq -n --arg name "$name" --argjson cores "$core_count" --argjson memory "$memory" --argjson storage "$storage" '{"name":$name,"cores":$cores,"memory":$memory,"storage":$storage}' >vm.json
+
+# shellcheck disable=SC2016
+file=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Building image…' -- orb run -m nixos '/usr/bin/env' 'bash' '-c' 'file="$(nix run github:nix-community/nixos-generators -- --format-path ./lib/proxmox-format.nix --configuration configuration.nix)"; cp $file .; echo $file')
+file=$(basename "$file")
+
+gum spin --spinner.foreground '#3498db' --title 'Uploading image…' -- scp "./$file" callisto:/var/lib/vz/dump/
+rm -f "./$file" ./vm.json
+
+vm_id=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Getting VM id…' -- ssh callisto "pvesh get /cluster/nextid")
+echo "ID: $(gum style --foreground '#3498db' "${vm_id}")"
+# shellcheck disable=SC2029
+gum spin --spinner.foreground '#3498db' --title 'Starting VM…' -- ssh callisto "qmrestore /var/lib/vz/dump/$file $vm_id --unique true && rm /var/lib/vz/dump/$file && qm start $vm_id"
+
+# echo "Tailscale $(gum style --foreground '#3498db' 'authentication key')?"
+# tskey=$(gum input --password --placeholder 'tskey-abcdef1432341818' --cursor.foreground '#2980b9')
+# printf '\e[A\e[K'
+
+tskey=$(cat ../../keys/tailscale-authkey.txt)
+
+gum spin --spinner.foreground '#3498db' --title 'Waiting for VM…' -- ssh callisto "until qm guest exec $vm_id /run/current-system/sw/bin/true; do echo "Try again"; sleep 5; done && qm guest exec $vm_id /run/current-system/sw/bin/tailscale -- up --authkey \"$tskey\" --ssh --accept-risk=lose-ssh"
+
+gum style --bold --foreground '#2ecc71' 'Done'
+
+cat <<EOF >../../hardware-configurations/"$name".nix
+{ modulesPath, ... }: {
+  imports = [ (modulesPath + "/virtualisation/proxmox-image.nix") ];
+}
+EOF

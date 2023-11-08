@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -e
+cd "$(dirname "$0")"
+
+# shellcheck disable=SC2016
+file=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Building template…' -- orb run -m nixos '/usr/bin/env' 'bash' '-c' 'file="$(nix run github:nix-community/nixos-generators -- --format proxmox-lxc --configuration ./configuration.nix)"; cp $file .; echo $file')
+file=$(basename "$file")
+echo "$file"

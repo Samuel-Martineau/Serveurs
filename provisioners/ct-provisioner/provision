@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -e
+cd "$(dirname "$0")"
+
+gum style --border normal --margin "1" --padding "1 2" --border-foreground '#27ae60' "Provisioning a new $(gum style --italic --bold --foreground '#2ecc71' 'container')."
+
+echo "Virtual machine $(gum style --foreground '#3498db' 'name')?"
+name=$(shuf ../moons.txt | gum choose --cursor.foreground '#3498db')
+printf '\e[A\e[K'
+echo "Name: $(gum style --foreground '#3498db' "$name")"
+
+if [ -f ../../hardware-configurations/"$name".nix ]; then
+  gum style --foreground '#e74c3c' "There is already a machine with the name $(gum style --bold "\"$name\"")"
+  exit 1
+fi
+
+ct_id=$(gum spin --show-output --spinner.foreground '#3498db' --title 'Getting CT id…' -- ssh callisto "pvesh get /cluster/nextid")
+echo "ID: $(gum style --foreground '#3498db' "${ct_id}")"
+
+# shellcheck disable=SC2029
+gum spin --spinner.foreground '#3498db' --title 'Creating and starting CT…' -- ssh callisto "pct create $ct_id local:vztmpl/nixos-system-x86_64-linux.tar.xz --arch amd64 --cmode console --features nesting=1 --description description --hostname $name --net0 name=eth0,bridge=vmbr0,firewall=1,ip=dhcp,type=veth --ostype nixos --storage local-lvm --unprivileged 1 && printf \"lxc.cgroup2.devices.allow: c 10:200 rwm\\nlxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file\\n\" >> /etc/pve/lxc/$ct_id.conf && pct start $ct_id"
+
+# echo "Tailscale $(gum style --foreground '#3498db' 'authentication key')?"
+# tskey=$(gum input --password --placeholder 'tskey-abcdef1432341818' --cursor.foreground '#2980b9')
+# printf '\e[A\e[K'
+
+tskey=$(cat ../../keys/tailscale-authkey.txt)
+
+gum spin --spinner.foreground '#3498db' --title 'Waiting for CT…' -- ssh callisto "until pct exec $ct_id /run/current-system/sw/bin/true; do echo "Try again"; sleep 5; done && pct exec $ct_id /run/current-system/sw/bin/tailscale -- up --authkey \"$tskey\" --ssh --accept-risk=lose-ssh"
+
+gum style --bold --foreground '#2ecc71' 'Done'
+
+cat <<EOF >../../hardware-configurations/"$name".nix
+{ modulesPath, ... }: {
+  imports = [ (modulesPath + "/virtualisation/proxmox-lxc.nix") ];
+}
+EOF

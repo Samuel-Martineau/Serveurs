@@ -1,0 +1,6 @@
+[submodule "services/omnivore/hosting"]
+	path = services/omnivore/hosting
+	url = https://github.com/omnivore-app/omnivore
+[submodule "services/plausible/hosting"]
+path = services/plausible/hosting
+url = https://github.com/plausible/hosting
